@@ -1,0 +1,125 @@
+@* Таблица курсов: код, название, курс, изменение. Поиск и сортировка — только отображение. *@
+
+<section class="table-card" aria-label="Курсы валют">
+    <div class="table-toolbar">
+        <h2>Все валюты</h2>
+        <input class="search" type="search" placeholder="Найти по коду или названию"
+               aria-label="Поиск валюты" @bind="Query" @bind:event="oninput" />
+    </div>
+
+    <div class="table-scroll">
+        <table class="rates">
+            <thead>
+            <tr>
+                <th scope="col" class="col-code">@SortButton("Код", SortColumn.Code)</th>
+                <th scope="col" class="col-name">@SortButton("Валюта", SortColumn.Name)</th>
+                <th scope="col" class="col-num">@SortButton($"Курс на {Report.RatesDate:dd.MM}, ₽", SortColumn.Rate)</th>
+                <th scope="col" class="col-num col-prev">Курс на @Report.PreviousRatesDate.ToString("dd.MM")</th>
+                <th scope="col" class="col-change">@SortButton("Изменение", SortColumn.Change)</th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var rate in Visible)
+            {
+                var trend = SummaryStrip.Trend(rate.ChangePercent);
+                <tr>
+                    <td class="col-code"><span class="code">@rate.CharCode</span></td>
+                    <td class="col-name">@rate.Name</td>
+                    <td class="col-num">@Format.Rate(rate.Rate)</td>
+                    <td class="col-num col-prev">@(rate.PreviousRate is { } p ? Format.Rate(p) : "—")</td>
+                    <td class="col-change">
+                        <div class="change @trend">
+                            <span class="bar" aria-hidden="true">
+                                <span class="bar-fill" style="@BarStyle(rate.ChangePercent)"></span>
+                            </span>
+                            <span class="pct">@Format.Percent(rate.ChangePercent)</span>
+                        </div>
+                    </td>
+                </tr>
+            }
+            @if (Visible.Count == 0)
+            {
+                <tr class="no-rows">
+                    <td colspan="5">Ничего не найдено по запросу «@Query»</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public RatesReport Report { get; set; } = default!;
+
+    private enum SortColumn { Code, Name, Rate, Change }
+
+    private string Query { get; set; } = string.Empty;
+    private SortColumn _sortBy = SortColumn.Code;
+    private bool _descending;
+
+    private decimal MaxAbsChange =>
+        Report.Rates.Where(r => r.ChangePercent.HasValue).Select(r => Math.Abs(r.ChangePercent!.Value))
+            .DefaultIfEmpty(0).Max();
+
+    private IReadOnlyList<CurrencyRateChange> Visible
+    {
+        get
+        {
+            var q = Query.Trim();
+            var rows = Report.Rates.Where(r => q.Length == 0
+                                               || r.CharCode.Contains(q, StringComparison.OrdinalIgnoreCase)
+                                               || r.Name.Contains(q, StringComparison.OrdinalIgnoreCase));
+            rows = _sortBy switch
+            {
+                SortColumn.Name => Order(rows, r => r.Name),
+                SortColumn.Rate => Order(rows, r => r.Rate),
+                // Валюты без изменения (нет данных за прошлый день) — всегда в конце.
+                SortColumn.Change => _descending
+                    ? rows.OrderBy(r => r.ChangePercent is null).ThenByDescending(r => r.ChangePercent)
+                    : rows.OrderBy(r => r.ChangePercent is null).ThenBy(r => r.ChangePercent),
+                _ => Order(rows, r => r.CharCode),
+            };
+            return rows.ToList();
+        }
+    }
+
+    private IEnumerable<CurrencyRateChange> Order<TKey>(IEnumerable<CurrencyRateChange> rows,
+        Func<CurrencyRateChange, TKey> key) =>
+        _descending ? rows.OrderByDescending(key) : rows.OrderBy(key);
+
+    private void SortBy(SortColumn column)
+    {
+        if (_sortBy == column)
+        {
+            _descending = !_descending;
+        }
+        else
+        {
+            _sortBy = column;
+            // Изменение и курс удобнее сначала смотреть по убыванию.
+            _descending = column is SortColumn.Change or SortColumn.Rate;
+        }
+    }
+
+    private RenderFragment SortButton(string label, SortColumn column) => __builder =>
+    {
+        var active = _sortBy == column;
+        <button type="button" class="sort @(active ? "active" : null)"
+                title="Сортировать" @onclick="() => SortBy(column)">
+            @label
+            <span class="sort-arrow" aria-hidden="true">@(active ? (_descending ? "↓" : "↑") : "↕")</span>
+        </button>
+    };
+
+    private string BarStyle(decimal? change)
+    {
+        if (change is null || MaxAbsChange == 0)
+        {
+            return "width:0";
+        }
+
+        var share = (double)(Math.Abs(change.Value) / MaxAbsChange) * 50;
+        var width = Math.Max(share, 1.5).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        return change > 0 ? $"left:50%;width:{width}%" : $"right:50%;width:{width}%";
+    }
+}

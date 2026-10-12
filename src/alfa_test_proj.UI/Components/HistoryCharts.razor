@@ -1,0 +1,43 @@
+@* Динамика USD и EUR за последние 7 дат с курсами. SVG строит Core — тот же график, что в PDF. *@
+
+@if (Charts.Count > 0)
+{
+    <section class="charts" aria-label="Динамика USD и EUR">
+        @foreach (var chart in Charts)
+        {
+            <figure class="chart">
+                <figcaption>
+                    <span class="chart-code">@chart.History.CharCode</span>
+                    <span class="chart-name">@chart.History.Name</span>
+                    <span class="chart-value">@Format.Rate(chart.Last.Value) ₽</span>
+                    <span class="chart-delta @SummaryStrip.Trend(chart.Change)" title="Изменение за период">@Format.Percent(chart.Change)</span>
+                </figcaption>
+                <div class="chart-svg">@chart.Svg</div>
+                <p class="chart-period">@Format.Date(chart.First.Date) — @Format.Date(chart.Last.Date)</p>
+            </figure>
+        }
+    </section>
+}
+
+@code {
+    private static readonly string[] Colors = ["#1F4E8C", "#7A5AF8"];
+
+    [Parameter, EditorRequired] public RatesReport Report { get; set; } = default!;
+
+    private IReadOnlyList<ChartView> Charts { get; set; } = [];
+
+    protected override void OnParametersSet()
+    {
+        Charts = Report.History
+            .Where(h => h.Points.Count >= 2)
+            .Select((h, i) =>
+            {
+                var svg = RateChartSvg.Render(h, Colors[i % Colors.Length], "Segoe UI, Arial, sans-serif");
+                return new ChartView(h, new MarkupString(svg ?? string.Empty), h.Points[0], h.Points[^1],
+                    h.PeriodChangePercent);
+            })
+            .ToList();
+    }
+
+    private sealed record ChartView(RateHistory History, MarkupString Svg, RatePoint First, RatePoint Last, decimal? Change);
+}

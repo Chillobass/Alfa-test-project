@@ -1,0 +1,394 @@
+@using Microsoft.Extensions.Logging
+@inject ICurrencyReportService ReportService
+@inject ILogger<MainPage> Logger
+
+<div class="layout">
+    <aside class="panel">
+        <div class="brand">Курсы валют ЦБ РФ</div>
+
+        <section class="panel-section" aria-labelledby="date-title">
+            <h2 id="date-title" class="panel-title">Курсы на дату</h2>
+            @if (SelectedDate is { } selected)
+            {
+                <div class="date-display">
+                    <span class="date-day">@RuDates.DayMonth(selected)</span>
+                    <span class="date-meta">@selected.Year, @RuDates.Weekday(selected)</span>
+                </div>
+            }
+            else
+            {
+                <div class="date-display"><span class="date-day">Дата не выбрана</span></div>
+            }
+
+            <label class="field-label" for="rate-date">Выберите дату (не позже сегодняшней)</label>
+            <input id="rate-date" class="field" type="date" max="@MaxDate" @bind="SelectedDate"
+                   disabled="@IsBusy" />
+
+            <button type="button" class="btn btn-light btn-wide" @onclick="LoadAsync"
+                    disabled="@(IsBusy || SelectedDate is null)">
+                @(Current == Operation.Loading ? "Загружаю…" : "Загрузить данные")
+            </button>
+        </section>
+
+        <section class="panel-section" aria-labelledby="report-title">
+            <h2 id="report-title" class="panel-title">Отчёт на почту</h2>
+
+            <label class="field-label" for="recipient">Адрес получателя</label>
+            <input id="recipient" class="field @(RecipientError is null ? null : "field-invalid")" type="email"
+                   placeholder="name@example.com" autocomplete="email"
+                   @bind="Recipient" @bind:event="oninput" @bind:after="ClearRecipientError"
+                   @onblur="ValidateRecipient" disabled="@IsBusy"
+                   aria-invalid="@(RecipientError is null ? "false" : "true")"
+                   aria-describedby="recipient-error" />
+            @if (RecipientError is not null)
+            {
+                <p id="recipient-error" class="field-error">@RecipientError</p>
+            }
+
+            <button type="button" class="btn btn-light btn-wide" @onclick="SendAsync"
+                    disabled="@(IsBusy || Report is null)"
+                    title="@(Report is null ? "Сначала загрузите данные" : null)">
+                @(Current == Operation.Sending ? "Отправляю…" : "Отправить отчёт")
+            </button>
+            <button type="button" class="btn btn-ghost btn-wide" @onclick="SavePdfAsync"
+                    disabled="@(IsBusy || Report is null)"
+                    title="Сформировать PDF без отправки — работает и без сети">
+                @(Current == Operation.SavingPdf ? "Сохраняю…" : "Сохранить PDF на компьютер")
+            </button>
+
+            <StageTracker Steps="Steps" />
+        </section>
+
+        <footer class="panel-footer">
+            @if (Config is null)
+            {
+                <p class="config">Проверяю настройки почты…</p>
+            }
+            else if (Config.IsValid)
+            {
+                <p class="config config-ok"><span class="led" aria-hidden="true"></span>Почта настроена. @Config.Message</p>
+            }
+            else
+            {
+                <p class="config config-bad"><span class="led" aria-hidden="true"></span>Отправка писем не настроена. @Config.Message</p>
+                <button type="button" class="link" @onclick="CheckConfig">Проверить снова</button>
+            }
+        </footer>
+    </aside>
+
+    <main class="content">
+        @if (Error is not null)
+        {
+            <div class="banner banner-error" role="alert">
+                <div>
+                    <strong>@Error.Title</strong>
+                    <p>@Error.Text</p>
+                </div>
+                <button type="button" class="banner-close" aria-label="Закрыть" @onclick="() => Error = null">✕</button>
+            </div>
+        }
+
+        @if (Notice is not null)
+        {
+            <div class="banner banner-ok" role="status">
+                <div>
+                    <strong>@Notice.Title</strong>
+                    <p>@Notice.Text</p>
+                    @if (Notice.FilePath is { } file)
+                    {
+                        <div class="banner-actions">
+                            <button type="button" class="btn btn-small" @onclick="() => Launch(() => FileLauncher.OpenFile(file))">Открыть PDF</button>
+                            <button type="button" class="btn btn-small btn-outline" @onclick="() => Launch(() => FileLauncher.ShowInFolder(file))">Показать в папке</button>
+                        </div>
+                    }
+                </div>
+                <button type="button" class="banner-close" aria-label="Закрыть" @onclick="() => Notice = null">✕</button>
+            </div>
+        }
+
+        @if (Report is { } report)
+        {
+            <header class="report-head">
+                <div>
+                    <h1>Курсы на @RuDates.Long(report.RatesDate)</h1>
+                    <p class="report-sub">
+                        Изменение относительно @RuDates.Long(report.PreviousRatesDate).
+                        @report.Rates.Count @Format.Plural(report.Rates.Count, "валюта", "валюты", "валют"),
+                        курс в рублях за 1 единицу.
+                    </p>
+                    @if (report.RequestedDate != report.RatesDate)
+                    {
+                        <p class="report-note">
+                            Вы выбрали @Format.Date(report.RequestedDate) — по данным ЦБ в этот день действуют курсы,
+                            установленные на @Format.Date(report.RatesDate).
+                        </p>
+                    }
+                </div>
+                @if (report.IsFromCache)
+                {
+                    <span class="tag tag-cache" title="Сайт ЦБ недоступен — показаны сохранённые данные">
+                        Из кэша · загружено @report.LoadedAt.ToString("dd.MM.yyyy HH:mm")
+                    </span>
+                }
+                else
+                {
+                    <span class="tag">Загружено с cbr.ru в @report.LoadedAt.ToString("HH:mm")</span>
+                }
+            </header>
+
+            <SummaryStrip Report="report" />
+            <HistoryCharts Report="report" />
+            <RatesTable @key="report" Report="report" />
+        }
+        else if (Current == Operation.Loading)
+        {
+            <div class="placeholder" aria-busy="true">
+                <span class="spinner spinner-dark"></span>
+                <p>Получаю курсы с сайта ЦБ РФ: выбранная дата, предыдущий день и динамика USD/EUR…</p>
+            </div>
+        }
+        else
+        {
+            <div class="placeholder">
+                <h1>Выберите дату и загрузите курсы</h1>
+                <p>
+                    Приложение скачает официальные курсы ЦБ РФ на эту дату и на предыдущий день с курсами,
+                    посчитает изменения и покажет итоги. Отчёт можно отправить на почту или сохранить в PDF.
+                </p>
+
+                @if (CachedEntries.Count > 0)
+                {
+                    <div class="cached">
+                        <h2>Сохранённые данные — откроются без интернета</h2>
+                        <ul>
+                            @foreach (var entry in CachedEntries.Take(8))
+                            {
+                                <li>
+                                    <button type="button" class="chip" disabled="@IsBusy"
+                                            @onclick="() => OpenCachedAsync(entry.RequestedDate)">
+                                        <span class="chip-date">@Format.Date(entry.RatesDate)</span>
+                                        <span class="chip-meta">загружено @entry.LoadedAt.ToString("dd.MM HH:mm")</span>
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+        }
+    </main>
+</div>
+
+@code {
+    private enum Operation { None, Loading, SavingPdf, Sending }
+
+    private sealed record Message(string Title, string Text, string? FilePath = null);
+
+    private DateOnly? SelectedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    private string Recipient { get; set; } = string.Empty;
+    private string? RecipientError { get; set; }
+
+    private RatesReport? Report { get; set; }
+    private IReadOnlyList<CachedRatesInfo> CachedEntries { get; set; } = [];
+    private ConfigurationStatus? Config { get; set; }
+
+    private Operation Current { get; set; } = Operation.None;
+    private bool IsBusy => Current != Operation.None;
+    private List<StageTracker.Step> Steps { get; set; } = [];
+
+    private Message? Error { get; set; }
+    private Message? Notice { get; set; }
+
+    private static string MaxDate => DateTime.Today.ToString("yyyy-MM-dd");
+
+    protected override void OnInitialized()
+    {
+        CheckConfig();
+        RefreshCache();
+    }
+
+    private void CheckConfig() => Config = ReportService.CheckConfiguration();
+
+    private void RefreshCache() => CachedEntries = ReportService.GetCachedEntries();
+
+    private async Task LoadAsync()
+    {
+        if (SelectedDate is not { } date)
+        {
+            return;
+        }
+
+        await RunAsync(Operation.Loading, "Не удалось загрузить курсы",
+            [new StageTracker.Step("load", "Загрузка и обработка курсов ЦБ РФ")],
+            async _ =>
+            {
+                Report = null;
+                Report = await ReportService.LoadRatesAsync(date);
+                RefreshCache();
+                if (Report.IsFromCache)
+                {
+                    Notice = new Message("Сайт ЦБ РФ недоступен — показаны сохранённые данные",
+                        $"Данные загружены ранее, {Report.LoadedAt:dd.MM.yyyy HH:mm}. Из них можно сформировать и отправить отчёт.");
+                }
+            });
+    }
+
+    private async Task OpenCachedAsync(DateOnly requestedDate)
+    {
+        SelectedDate = requestedDate;
+        await RunAsync(Operation.Loading, "Не удалось открыть сохранённые данные",
+            [new StageTracker.Step("load", "Чтение сохранённых данных")],
+            async _ => Report = await ReportService.LoadFromCacheAsync(requestedDate));
+    }
+
+    private async Task SavePdfAsync()
+    {
+        if (Report is not { } report)
+        {
+            return;
+        }
+
+        await RunAsync(Operation.SavingPdf, "Не удалось сохранить PDF",
+            [
+                new StageTracker.Step(nameof(ReportStage.BuildingPdf), "Формирование PDF"),
+                new StageTracker.Step(nameof(ReportStage.SavingFile), "Сохранение файла"),
+            ],
+            async progress =>
+            {
+                var path = await ReportService.SavePdfAsync(report, progress);
+                Notice = new Message("PDF сохранён", path, path);
+            });
+    }
+
+    private async Task SendAsync()
+    {
+        if (Report is not { } report)
+        {
+            return;
+        }
+
+        // Адрес проверяет Core; здесь только показываем результат проверки у поля.
+        RecipientError = ReportService.ValidateRecipient(Recipient);
+        if (RecipientError is not null)
+        {
+            return;
+        }
+
+        await RunAsync(Operation.Sending, "Отчёт не отправлен",
+            [
+                new StageTracker.Step(nameof(ReportStage.BuildingPdf), "Формирование PDF"),
+                new StageTracker.Step(nameof(ReportStage.Sending), "Отправка письма"),
+            ],
+            async progress =>
+            {
+                var result = await ReportService.SendReportAsync(report, Recipient, progress);
+                Notice = new Message($"Отчёт отправлен на {result.Recipient}",
+                    result.AiComment is null
+                        ? $"Тема письма: «Курсы валют ЦБ РФ на {Format.Date(report.RatesDate)}», PDF во вложении."
+                        : $"В письмо добавлен комментарий модели: «{result.AiComment}»");
+            });
+    }
+    
+    private async Task RunAsync(Operation operation, string errorTitle, List<StageTracker.Step> steps,
+        Func<IProgress<ReportStage>, Task> action)
+    {
+        Current = operation;
+        Steps = steps;
+        Error = null;
+        Notice = null;
+        Steps[0].State = StageTracker.StepState.Active;
+        StateHasChanged();
+
+        var progress = new Progress<ReportStage>(stage =>
+        {
+            MarkActive(stage);
+            StateHasChanged();
+        });
+
+        try
+        {
+            await action(progress);
+            foreach (var step in Steps)
+            {
+                step.State = StageTracker.StepState.Done;
+            }
+        }
+        catch (CurrencyReportException ex)
+        {
+            Fail(errorTitle, ex.Message);
+            if (ex is ConfigurationException)
+            {
+                CheckConfig();
+            }
+            else if (ex is InvalidRecipientException)
+            {
+                RecipientError = ex.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Непредвиденная ошибка в операции {Operation}", operation);
+            Fail(errorTitle, $"Непредвиденная ошибка: {ex.Message}. Подробности записаны в лог (папка logs).");
+        }
+        finally
+        {
+            Current = Operation.None;
+        }
+    }
+
+    private void MarkActive(ReportStage stage)
+    {
+        var key = stage.ToString();
+        var target = Steps.FirstOrDefault(s => s.Key == key);
+        if (target is null && stage == ReportStage.GeneratingComment)
+        {
+            // Этап появляется, только если в config.json включён комментарий языковой модели.
+            target = new StageTracker.Step(key, "Комментарий языковой модели");
+            Steps.Insert(Math.Max(Steps.Count - 1, 0), target);
+        }
+
+        if (target is null)
+        {
+            return;
+        }
+
+        foreach (var step in Steps.TakeWhile(s => s != target))
+        {
+            step.State = StageTracker.StepState.Done;
+        }
+
+        target.State = StageTracker.StepState.Active;
+    }
+
+    private void Fail(string title, string text)
+    {
+        Error = new Message(title, text);
+        foreach (var step in Steps.Where(s => s.State == StageTracker.StepState.Active))
+        {
+            step.State = StageTracker.StepState.Failed;
+        }
+    }
+
+    private void ValidateRecipient()
+    {
+        if (!string.IsNullOrWhiteSpace(Recipient))
+        {
+            RecipientError = ReportService.ValidateRecipient(Recipient);
+        }
+    }
+
+    private void ClearRecipientError() => RecipientError = null;
+
+    private void Launch(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Не удалось открыть файл или папку");
+            Error = new Message("Не удалось открыть файл", ex.Message);
+        }
+    }
+}

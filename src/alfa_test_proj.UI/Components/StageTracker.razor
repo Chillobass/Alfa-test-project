@@ -1,0 +1,43 @@
+@* Индикация этапов операции: загрузка, формирование PDF, комментарий ИИ, отправка. *@
+
+@if (Steps.Count > 0)
+{
+    <ol class="stages" aria-label="Ход выполнения">
+        @foreach (var step in Steps)
+        {
+            <li class="stage stage-@step.State.ToString().ToLowerInvariant()">
+                <span class="stage-mark" aria-hidden="true">
+                    @switch (step.State)
+                    {
+                        case StepState.Active:
+                            <span class="spinner"></span>
+                            break;
+                        case StepState.Done:
+                            <svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" /></svg>
+                            break;
+                        case StepState.Failed:
+                            <svg viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>
+                            break;
+                        default:
+                            <span class="dot"></span>
+                            break;
+                    }
+                </span>
+                <span class="stage-label">@step.Label</span>
+            </li>
+        }
+    </ol>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<Step> Steps { get; set; } = [];
+
+    public enum StepState { Pending, Active, Done, Failed }
+
+    public sealed class Step(string key, string label)
+    {
+        public string Key { get; } = key;
+        public string Label { get; } = label;
+        public StepState State { get; set; } = StepState.Pending;
+    }
+}

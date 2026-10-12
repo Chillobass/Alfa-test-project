@@ -1,0 +1,62 @@
+@* Блок «Итоги дня»: топ-3 роста, топ-3 падения, среднее изменение. *@
+
+<section class="summary" aria-label="Итоги дня">
+    <div class="summary-col summary-up">
+        <h3>Сильнее всего выросли</h3>
+        @if (Report.Summary.TopGainers.Count == 0)
+        {
+            <p class="summary-empty">Ни одна валюта не выросла</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var item in Report.Summary.TopGainers)
+                {
+                    <li>
+                        <span class="code">@item.CharCode</span>
+                        <span class="name" title="@item.Name">@item.Name</span>
+                        <span class="pct">@Format.Percent(item.ChangePercent)</span>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    <div class="summary-col summary-down">
+        <h3>Сильнее всего упали</h3>
+        @if (Report.Summary.TopLosers.Count == 0)
+        {
+            <p class="summary-empty">Ни одна валюта не подешевела</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var item in Report.Summary.TopLosers)
+                {
+                    <li>
+                        <span class="code">@item.CharCode</span>
+                        <span class="name" title="@item.Name">@item.Name</span>
+                        <span class="pct">@Format.Percent(item.ChangePercent)</span>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    <div class="summary-col summary-avg">
+        <h3>Среднее изменение</h3>
+        <p class="avg @Trend(Report.Summary.AverageChangePercent)">@Format.Percent(Report.Summary.AverageChangePercent)</p>
+        <p class="avg-note">по @Report.Summary.ComparedCount @Format.Plural(Report.Summary.ComparedCount, "валюте", "валютам", "валютам") из @Report.Rates.Count</p>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public RatesReport Report { get; set; } = default!;
+
+    public static string Trend(decimal? value) => value switch
+    {
+        > 0 => "up",
+        < 0 => "down",
+        _ => "flat",
+    };
+}

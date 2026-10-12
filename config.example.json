@@ -4,6 +4,16 @@
     "Port": 587,
     "UserName": "user@example.com",
     "Password": "CHANGE_ME",
-    "FromAddress": "user@example.com"
+    "FromAddress": "user@example.com",
+    "FromName": "Курсы валют ЦБ РФ",
+    "Security": "Auto",
+    "TimeoutSeconds": 30
+  },
+  "Llm": {
+    "Enabled": false,
+    "Endpoint": "https://api.openai.com/v1/chat/completions",
+    "ApiKey": "",
+    "Model": "gpt-4o-mini",
+    "TimeoutSeconds": 20
   }
 }
